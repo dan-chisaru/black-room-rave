@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Black Room Rave – a dark, minimal, underground online room with continuous techno radio."
+    />
+    <title>Black Room Rave</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <div class="radio-status" id="radio-status" aria-live="polite">
+      <span class="radio-status-dot" aria-hidden="true"></span>
+      <span class="radio-status-label">radio</span>
+    </div>
+    <main class="page" aria-label="Black Room Rave">
+      <section class="room room-visible" id="room" aria-label="Black Room Rave radio room">
+        <div class="room-inner">
+          <header class="room-header">
+            <img
+              src="assets/6alb.png"
+              alt="Black Room Rave logo"
+              class="room-logo"
+            />
+          </header>
+
+          <div class="room-visualizer-wrapper">
+            <div class="visualizer" id="visualizer" aria-hidden="true">
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+            </div>
+          </div>
+
+          <footer class="room-footer" aria-live="polite">
+            <button type="button" class="transport-button" id="transport-button">
+              play
+            </button>
+            <input
+              type="range"
+              class="volume-slider"
+              id="volume-slider"
+              min="0"
+              max="100"
+              value="80"
+              aria-label="volume"
+            />
+            <p class="track-label">now playing</p>
+            <p class="track-time" id="track-time">--:-- / --:--</p>
+            <p class="track-title" id="track-title">&nbsp;</p>
+          </footer>
+        </div>
+
+        <iframe
+          id="sc-player"
+          title="Black Room Rave Radio"
+          class="sc-iframe"
+          width="100%"
+          height="166"
+          scrolling="no"
+          frameborder="0"
+          allow="autoplay"
+          src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/trommelmusic/sets/trommel-podcast&color=%23000000&auto_play=true&continuous_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=true"
+        ></iframe>
+      </section>
+    </main>
+
+    <!-- SoundCloud Widget API -->
+    <script src="https://w.soundcloud.com/player/api.js"></script>
+    <script src="script.js" defer></script>
+  </body>
+</html>
