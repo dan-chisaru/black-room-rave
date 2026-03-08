@@ -31,6 +31,7 @@
   let trackDurationMs = null;
   let trackTimeIntervalId = null;
   let radioResyncIntervalId = null;
+  let nowPlayingRefreshIntervalId = null;
   let fallbackMode = false;
   let bootstrapSubmitted = false;
   let pendingFallbackSeekMs = null;
@@ -148,6 +149,22 @@
     }, 1000);
   }
 
+
+  function resetNowPlayingUi() {
+    if (trackTitleEl) trackTitleEl.textContent = "loading...";
+    if (trackTimeEl) trackTimeEl.textContent = "--:-- / --:--";
+  }
+
+  function startNowPlayingRefreshLoop() {
+    if (nowPlayingRefreshIntervalId != null) {
+      window.clearInterval(nowPlayingRefreshIntervalId);
+      nowPlayingRefreshIntervalId = null;
+    }
+
+    nowPlayingRefreshIntervalId = window.setInterval(() => {
+      updateTrackTitle(false);
+    }, 1500);
+  }
   function syncWithRadioState(radioState) {
     if (!widget || !radioState) return;
 
@@ -232,9 +249,10 @@
           show_teaser: false,
           start_track: typeof trackIndex === "number" ? trackIndex : 0,
         });
+        window.setTimeout(() => updateTrackTitle(true), 700);
       } else {
         startFallbackPlayback();
-        updateTrackTitle();
+        window.setTimeout(() => updateTrackTitle(true), 700);
         updateTransportLabel();
       }
     });
@@ -254,7 +272,7 @@
       }
 
       applyUserVolume();
-      updateTrackTitle();
+      updateTrackTitle(true);
       updateTransportLabel();
     });
 
@@ -317,11 +335,13 @@
     return "Unknown Artist";
   }
 
-  function updateTrackTitle() {
+  function updateTrackTitle(refreshDuration = false) {
     if (!widget || !trackTitleEl) return;
     widget.getCurrentSound((sound) => {
       trackTitleEl.textContent = getArtistName(sound);
     });
+
+    if (!refreshDuration) return;
 
     widget.getDuration((durationMs) => {
       trackDurationMs = Number.isFinite(durationMs) ? durationMs : null;
@@ -460,10 +480,12 @@
   async function init() {
     if (!room || !scIframe) return;
 
+    resetNowPlayingUi();
     const radioState = await fetchRadioState();
     setupSoundCloudWidget(radioState);
     startVisualizer();
     startRadioResyncLoop();
+    startNowPlayingRefreshLoop();
 
     if (transportButton) {
       transportButton.addEventListener("click", () => {
@@ -503,6 +525,16 @@
     if (radioResyncIntervalId != null) {
       window.clearInterval(radioResyncIntervalId);
     }
+    if (nowPlayingRefreshIntervalId != null) {
+      window.clearInterval(nowPlayingRefreshIntervalId);
+    }
   });
 })();
+
+
+
+
+
+
+
 
