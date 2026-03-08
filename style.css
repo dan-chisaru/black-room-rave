@@ -73,7 +73,7 @@ body {
 .room-inner {
   max-width: 960px;
   width: 100%;
-  padding: 2rem 1.5rem 1.5rem;
+  padding: 2rem 1.5rem 12vh;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -86,7 +86,7 @@ body {
   justify-content: center;
   flex-direction: column;
   gap: 0.4rem;
-  padding-top: 0.5rem;
+  padding-top: 15vh;
   min-height: 74px;
 }
 
@@ -102,23 +102,25 @@ body {
   outline-offset: 6px;
 }
 
-.god-hint {
-  margin: 0;
+.live-comment {
+  min-height: 1.1rem;
+  margin: 0.35rem auto 0;
+  width: min(420px, 80vw);
   font-size: 0.56rem;
-  letter-spacing: 0.24em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.25);
+  color: rgba(255, 255, 255, 0.46);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-
-body.god-mode .god-hint {
-  color: rgba(255, 255, 255, 0.52);
-}
-
 .room-visualizer-wrapper {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin-top: -1.8rem;
 }
 
 .visualizer {
@@ -127,7 +129,8 @@ body.god-mode .god-hint {
   justify-content: center;
   gap: 3px;
   width: min(420px, 80vw);
-  height: 110px;
+  height: 35vh;
+  max-height: 260px;
 }
 
 .bar {
@@ -190,7 +193,7 @@ body.god-mode .god-hint {
   background: transparent;
   border: none;
   padding: 0.4rem 1.6rem;
-  margin: 0 auto 1rem;
+  margin: 0 auto 0.8rem;
   color: rgba(255, 255, 255, 0.72);
   font-size: 0.8rem;
   letter-spacing: 0.12em;
@@ -233,7 +236,7 @@ body.god-mode .god-hint {
   appearance: none;
   width: 120px;
   height: 2px;
-  margin: 0 auto 1.1rem;
+  margin: 0 auto 0.9rem;
   background-color: rgba(255, 255, 255, 0.14);
   border-radius: 999px;
   outline: none;
@@ -329,13 +332,23 @@ body.god-mode .god-hint {
   color: rgba(255, 255, 255, 0.48);
 }
 
+.god-sc-plugin {
+  width: 100%;
+  height: 166px;
+  border: 0;
+  margin: 0 0 0.7rem;
+}
+
 .playlist-list {
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 0 0.2rem 0 0;
   display: flex;
   flex-direction: column;
   gap: 0.65rem;
+  height: 18rem;
+  max-height: 18rem;
+  overflow-y: auto;
 }
 
 .playlist-list li {
@@ -433,7 +446,8 @@ body.god-mode .god-panel {
 
   .visualizer {
     gap: 3px;
-    height: 100px;
+    height: 16vh;
+    max-height: 130px;
   }
 
   .bar {
@@ -448,3 +462,7 @@ body.god-mode .god-panel {
     font-size: 0.58rem;
   }
 }
+
+
+
+

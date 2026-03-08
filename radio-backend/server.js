@@ -28,6 +28,44 @@ const listenerHeartbeats = new Map();
 let maxConcurrentListeners = 0;
 let totalListenerSessions = 0;
 
+const SOUNDCLOUD_CLIENT_ID = (process.env.SOUNDCLOUD_CLIENT_ID ?? "").trim();
+
+async function fetchSoundCloudTrackComments(trackId) {
+  if (!SOUNDCLOUD_CLIENT_ID) {
+    return { comments: [], reason: "missing_client_id" };
+  }
+
+  const url = `https://api-v2.soundcloud.com/tracks/${trackId}/comments?client_id=${encodeURIComponent(
+    SOUNDCLOUD_CLIENT_ID
+  )}&limit=200`;
+
+  try {
+    const res = await fetch(url);
+    if (!res.ok) {
+      return { comments: [], reason: `soundcloud_${res.status}` };
+    }
+
+    const data = await res.json();
+    const collection = Array.isArray(data?.collection) ? data.collection : [];
+
+    const comments = collection
+      .map((entry) => {
+        const timestampMs = Number.parseInt(entry?.timestamp, 10);
+        const body = typeof entry?.body === "string" ? entry.body.trim() : "";
+
+        if (!Number.isFinite(timestampMs) || timestampMs < 0 || !body) return null;
+        return { timestampMs, body };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.timestampMs - b.timestampMs);
+
+    return { comments, reason: comments.length ? "ok" : "empty" };
+  } catch (_err) {
+    return { comments: [], reason: "fetch_error" };
+  }
+}
+
+
 function pruneListeners(nowMs) {
   for (const [listenerId, lastSeenMs] of listenerHeartbeats.entries()) {
     if (nowMs - lastSeenMs > LISTENER_TTL_MS) {
@@ -353,8 +391,27 @@ app.get("/api/admin-state", (req, res) => {
   });
 });
 
+
+app.get("/api/track-comments", async (req, res) => {
+  const trackId = Number.parseInt(req.query?.trackId, 10);
+
+  if (!Number.isFinite(trackId) || trackId <= 0) {
+    return res.status(400).json({ ok: false, comments: [], error: "invalid_track_id" });
+  }
+
+  const data = await fetchSoundCloudTrackComments(trackId);
+
+  return res.json({
+    ok: true,
+    trackId,
+    comments: data.comments,
+    source: data.reason,
+  });
+});
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Radio state server listening on http://localhost:${PORT}`);
 });
+
+
 

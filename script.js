@@ -12,6 +12,7 @@
   const ADMIN_STATE_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-state");
   const ADMIN_PLAYLIST_ORDER_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-playlist-order");
   const ADMIN_JUMP_TRACK_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-jump-track");
+  const TRACK_COMMENTS_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/track-comments");
   const LISTENER_HEARTBEAT_URL = RADIO_STATE_URL.replace(
     "/api/radio-state",
     "/api/listener-heartbeat"
@@ -31,12 +32,14 @@
   const HEARTBEAT_INTERVAL_MS = 15000;
   const GOD_MODE_UNLOCKED = true;
   const MANUAL_GOD_MODE_OVERRIDE_MS = 2 * 60 * 1000;
+  const INTRO_SKIP_DEFAULT_MS = 90 * 1000;
 
   const room = document.getElementById("room");
   const roomLogo = document.getElementById("room-logo");
   const transportButton = document.getElementById("transport-button");
   const trackTitleEl = document.getElementById("track-title");
   const trackTimeEl = document.getElementById("track-time");
+  const liveCommentEl = document.getElementById("live-comment");
   const visualizerEl = document.getElementById("visualizer");
   const bars = visualizerEl ? Array.from(visualizerEl.querySelectorAll(".bar")) : [];
   const scIframe = document.getElementById("sc-player");
@@ -54,6 +57,7 @@
   const adminLoadPlaylistBtn = document.getElementById("admin-load-playlist");
   const adminShufflePlaylistBtn = document.getElementById("admin-shuffle-playlist");
   const adminResetPlaylistBtn = document.getElementById("admin-reset-playlist");
+  const adminScPluginIframe = document.getElementById("admin-sc-plugin");
 
   let widget = null;
   let isPlaying = false;
@@ -67,6 +71,7 @@
   let radioResyncIntervalId = null;
   let nowPlayingRefreshIntervalId = null;
   let adminRefreshIntervalId = null;
+  let adminWidgetSyncIntervalId = null;
   let listenerHeartbeatIntervalId = null;
   let manualGodModeOverrideUntilMs = 0;
 
@@ -74,8 +79,10 @@
   let bootstrapSubmitted = false;
   let pendingFallbackSeekMs = null;
   let userStopped = false;
+  let hasActivatedAudioGesture = false;
 
   let godModeEnabled = false;
+  let godPlaylistAutoPrepared = false;
   let listenerId = null;
 
   let latestRadioState = null;
@@ -84,6 +91,11 @@
 
   let soundCloudPlaylistTracks = [];
   let godPlaylistOrder = [];
+  let adminPluginWidget = null;
+  let adminPluginReady = false;
+  let activeCommentTrackId = null;
+  let activeTimelineComments = [];
+  let activeCommentText = "";
   const trackSeenCounts = new Map();
   let lastObservedTrackIndex = null;
 
@@ -117,6 +129,94 @@
     return radioState.positionMs + networkLagMs;
   }
 
+  function getStartPositionMs(positionMs) {
+    if (Number.isFinite(positionMs) && positionMs > 0) {
+      return Math.max(0, Math.floor(positionMs));
+    }
+
+    return INTRO_SKIP_DEFAULT_MS;
+  }
+
+  function sanitizeCommentText(value) {
+    if (typeof value !== "string") return "";
+    return value.replace(/\s+/g, " ").trim();
+  }
+
+  async function fetchTrackTimelineComments(trackId) {
+    if (!Number.isFinite(trackId) || trackId <= 0) return [];
+
+    try {
+      const res = await fetch(`${TRACK_COMMENTS_URL}?trackId=${trackId}`, { cache: "no-store" });
+      if (!res.ok) return [];
+
+      const data = await res.json();
+      if (!Array.isArray(data?.comments)) return [];
+
+      return data.comments
+        .map((comment) => ({
+          timestampMs: Number.isFinite(comment?.timestampMs) ? Math.max(0, Math.floor(comment.timestampMs)) : null,
+          body: sanitizeCommentText(comment?.body),
+        }))
+        .filter((comment) => Number.isFinite(comment.timestampMs) && comment.body)
+        .sort((a, b) => a.timestampMs - b.timestampMs);
+    } catch (_err) {
+      return [];
+    }
+  }
+
+  function updateLiveCommentAtPosition(positionMs) {
+    if (!liveCommentEl) return;
+    if (!Array.isArray(activeTimelineComments) || !activeTimelineComments.length) {
+      activeCommentText = "";
+      liveCommentEl.textContent = "";
+      return;
+    }
+
+    const elapsed = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
+    let active = null;
+
+    for (let i = 0; i < activeTimelineComments.length; i += 1) {
+      const comment = activeTimelineComments[i];
+      if (comment.timestampMs > elapsed) break;
+      active = comment;
+    }
+
+    const nextText = active ? active.body : "";
+    if (nextText === activeCommentText) return;
+
+    activeCommentText = nextText;
+    liveCommentEl.textContent = nextText;
+  }
+
+  async function updateLiveCommentForSound(sound) {
+    if (!liveCommentEl) return;
+
+    const trackId = Number.isFinite(sound?.id) ? sound.id : null;
+    if (!Number.isFinite(trackId)) {
+      activeCommentTrackId = null;
+      activeTimelineComments = [];
+      activeCommentText = "";
+      liveCommentEl.textContent = "";
+      return;
+    }
+
+    if (trackId !== activeCommentTrackId) {
+      activeCommentTrackId = trackId;
+      activeTimelineComments = [];
+      activeCommentText = "";
+      liveCommentEl.textContent = "";
+      activeTimelineComments = await fetchTrackTimelineComments(trackId);
+    }
+
+    if (!widget) {
+      liveCommentEl.textContent = "";
+      return;
+    }
+
+    widget.getPosition((positionMs) => {
+      updateLiveCommentAtPosition(positionMs);
+    });
+  }
   function applyUserVolume() {
     if (!widget) return;
     widget.setVolume(userStopped ? 0 : volume);
@@ -136,7 +236,7 @@
   }
 
   function getRandomFallbackPositionMs() {
-    const minMs = 60 * 1000;
+    const minMs = INTRO_SKIP_DEFAULT_MS;
     const maxMs = 55 * 60 * 1000;
     return minMs + Math.floor(Math.random() * (maxMs - minMs));
   }
@@ -200,7 +300,7 @@
   }
 
   function startTrackTimeLoop() {
-    if (!widget || !trackTimeEl) return;
+    if (!widget) return;
 
     if (trackTimeIntervalId != null) {
       window.clearInterval(trackTimeIntervalId);
@@ -208,14 +308,19 @@
     }
 
     trackTimeIntervalId = window.setInterval(() => {
-      if (!widget || !trackTimeEl) return;
+      if (!widget) return;
       widget.getPosition((positionMs) => {
         const elapsed = positionMs ?? 0;
-        if (trackDurationMs && trackDurationMs > 0) {
-          trackTimeEl.textContent = `${formatTime(elapsed)} / ${formatTime(trackDurationMs)}`;
-        } else {
-          trackTimeEl.textContent = `${formatTime(elapsed)}`;
+
+        if (trackTimeEl) {
+          if (trackDurationMs && trackDurationMs > 0) {
+            trackTimeEl.textContent = `${formatTime(elapsed)} / ${formatTime(trackDurationMs)}`;
+          } else {
+            trackTimeEl.textContent = `${formatTime(elapsed)}`;
+          }
         }
+
+        updateLiveCommentAtPosition(elapsed);
       });
     }, 1000);
   }
@@ -223,8 +328,8 @@
   function resetNowPlayingUi() {
     if (trackTitleEl) trackTitleEl.textContent = "loading...";
     if (trackTimeEl) trackTimeEl.textContent = "--:-- / --:--";
+    if (liveCommentEl) liveCommentEl.textContent = "";
   }
-
   function startNowPlayingRefreshLoop() {
     if (nowPlayingRefreshIntervalId != null) {
       window.clearInterval(nowPlayingRefreshIntervalId);
@@ -242,6 +347,11 @@
 
     const expectedPositionMs = getExpectedPositionMs(radioState);
     if (!Number.isFinite(expectedPositionMs)) return;
+
+    const normalizedExpectedPositionMs =
+      Number.isFinite(radioState.positionMs) && radioState.positionMs > 0
+        ? expectedPositionMs
+        : Math.max(expectedPositionMs, INTRO_SKIP_DEFAULT_MS);
 
     const playlistUrl = radioState.playlistUrl || PLAYLIST_URL;
 
@@ -262,9 +372,9 @@
         }
 
         widget.getPosition((currentPositionMs) => {
-          const driftMs = Math.abs((currentPositionMs ?? 0) - expectedPositionMs);
+          const driftMs = Math.abs((currentPositionMs ?? 0) - normalizedExpectedPositionMs);
           if (driftMs > MAX_DRIFT_MS) {
-            widget.seekTo(expectedPositionMs);
+            widget.seekTo(normalizedExpectedPositionMs);
           }
         });
       });
@@ -272,9 +382,9 @@
     }
 
     widget.getPosition((currentPositionMs) => {
-      const driftMs = Math.abs((currentPositionMs ?? 0) - expectedPositionMs);
+      const driftMs = Math.abs((currentPositionMs ?? 0) - normalizedExpectedPositionMs);
       if (driftMs > MAX_DRIFT_MS) {
-        widget.seekTo(expectedPositionMs);
+        widget.seekTo(normalizedExpectedPositionMs);
       }
     });
   }
@@ -373,6 +483,7 @@
     if (!widget || !trackTitleEl) return;
     widget.getCurrentSound((sound) => {
       trackTitleEl.textContent = getArtistName(sound);
+      void updateLiveCommentForSound(sound);
     });
 
     updateLiveTrackFromWidget(refreshDuration);
@@ -461,15 +572,50 @@
   async function rejoinLivePlayback() {
     if (!widget) return;
 
+    // Start immediately in gesture context (mobile autoplay policy).
+    widget.play();
+
     try {
       const latestState = await fetchRadioState();
       if (latestState) {
         fallbackMode = false;
         syncWithRadioState(latestState);
       }
-    } finally {
-      widget.play();
+    } catch (_err) {
+      // Keep playback running if sync call fails.
     }
+  }
+
+  async function startAudioFromGesture() {
+    if (!widget) return false;
+
+    hasActivatedAudioGesture = true;
+    userStopped = false;
+    await rejoinLivePlayback();
+    applyUserVolume();
+    updateTransportLabel();
+    return true;
+  }
+
+  function setupGlobalTapToStart() {
+    const onPointerDown = async () => {
+      const started = await startAudioFromGesture();
+      if (started) cleanup();
+    };
+
+    const onKeyDown = async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      const started = await startAudioFromGesture();
+      if (started) cleanup();
+    };
+
+    const cleanup = () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+
+    document.addEventListener("pointerdown", onPointerDown, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
   }
 
   function togglePlayback() {
@@ -477,6 +623,7 @@
 
     widget.isPaused(async (paused) => {
       if (userStopped || paused || !isPlaying) {
+        hasActivatedAudioGesture = true;
         userStopped = false;
         await rejoinLivePlayback();
         applyUserVolume();
@@ -490,6 +637,12 @@
 
   function updateTransportLabel() {
     if (!transportButton) return;
+
+    if (!hasActivatedAudioGesture) {
+      transportButton.textContent = "Click anywhere to play";
+      return;
+    }
+
     transportButton.textContent = userStopped || !isPlaying ? "Play" : "Stop";
   }
 
@@ -637,7 +790,7 @@
 
     if (soundCloudPlaylistTracks.length) {
       if (adminPlaylistStatusEl) {
-        adminPlaylistStatusEl.textContent = `playlist loaded (${soundCloudPlaylistTracks.length} tracks)`;
+        adminPlaylistStatusEl.textContent = `playlist loaded (${soundCloudPlaylistTracks.length} tracks) / intro skip 1m30s`;
       }
       renderPlaylistFromCurrentData();
       return true;
@@ -741,11 +894,13 @@
       adminPlaylistStatusEl.textContent = `switching stream to track ${trackIndex}...`;
     }
 
+    const requestedPositionMs = getStartPositionMs(0);
+
     try {
       const res = await fetch(ADMIN_JUMP_TRACK_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackIndex, positionMs: 0 }),
+        body: JSON.stringify({ trackIndex, positionMs: requestedPositionMs }),
       });
 
       if (!res.ok) throw new Error("jump failed");
@@ -759,7 +914,7 @@
 
       pendingRadioState = {
         trackIndex: jumpedTrackIndex,
-        positionMs: 0,
+        positionMs: requestedPositionMs,
         playlistUrl: PLAYLIST_URL,
         serverTimeMs: Date.now(),
       };
@@ -787,7 +942,7 @@
       manualGodModeOverrideUntilMs = Date.now() + 12 * 60 * 60 * 1000;
       pendingRadioState = {
         trackIndex,
-        positionMs: 0,
+        positionMs: requestedPositionMs,
         playlistUrl: PLAYLIST_URL,
         serverTimeMs: Date.now(),
       };
@@ -826,6 +981,27 @@
     return FALLBACK_ADMIN_TRACKS;
   }
 
+  function getVisibleUpcomingTracks(tracks) {
+    if (!Array.isArray(tracks) || !tracks.length) return [];
+
+    if (!Number.isFinite(liveTrackIndex)) {
+      return [...tracks];
+    }
+
+    const livePos = tracks.findIndex((track) => track.index === liveTrackIndex);
+    if (livePos < 0) {
+      return [...tracks];
+    }
+
+    const visible = [];
+    for (let step = 1; step <= tracks.length; step += 1) {
+      const pos = (livePos + step) % tracks.length;
+      visible.push(tracks[pos]);
+    }
+
+    return visible;
+  }
+
   function getStartsForTrack(track) {
     if (Number.isFinite(track.approxStarts)) {
       return track.approxStarts;
@@ -843,17 +1019,18 @@
     if (!adminPlaylistListEl) return;
 
     const tracks = getTracksForRender();
+    const visibleTracks = getVisibleUpcomingTracks(tracks);
     adminPlaylistListEl.innerHTML = "";
 
-    if (!tracks.length) {
+    if (!visibleTracks.length) {
       if (adminPlaylistStatusEl) {
         adminPlaylistStatusEl.textContent = "no playlist data";
       }
       return;
     }
 
-    for (let i = 0; i < tracks.length; i += 1) {
-      const track = tracks[i];
+    for (let i = 0; i < visibleTracks.length; i += 1) {
+      const track = visibleTracks[i];
       const item = document.createElement("li");
       if (track.index === liveTrackIndex) {
         item.classList.add("playlist-live");
@@ -864,7 +1041,7 @@
 
       const order = document.createElement("span");
       order.className = "playlist-order";
-      order.textContent = `#${i + 1}`;
+      order.textContent = `next #${i + 1}`;
 
       const move = document.createElement("div");
       move.className = "playlist-move";
@@ -878,18 +1055,20 @@
       move.appendChild(playBtn);
 
       if (soundCloudPlaylistTracks.length) {
+        const orderIndex = godPlaylistOrder.indexOf(track.index);
+
         const up = document.createElement("button");
         up.type = "button";
         up.textContent = "^";
         up.addEventListener("click", async () => {
-          await moveGodPlaylistItem(i, -1);
+          await moveGodPlaylistItem(orderIndex, -1);
         });
 
         const down = document.createElement("button");
         down.type = "button";
         down.textContent = "v";
         down.addEventListener("click", async () => {
-          await moveGodPlaylistItem(i, 1);
+          await moveGodPlaylistItem(orderIndex, 1);
         });
 
         move.appendChild(up);
@@ -1009,13 +1188,22 @@
     }
   }
 
-  function toggleGodMode() {
+  async function toggleGodMode() {
     godModeEnabled = !godModeEnabled;
     document.body.classList.toggle("god-mode", godModeEnabled);
 
     if (godModeEnabled) {
       startAdminRefreshLoop();
-      loadPlaylistFromWidget(false);
+      await loadPlaylistFromWidget(true);
+
+      if (!godPlaylistAutoPrepared) {
+        await shuffleGodPlaylist();
+        godPlaylistAutoPrepared = true;
+      }
+
+      if (adminPlaylistStatusEl && soundCloudPlaylistTracks.length) {
+        adminPlaylistStatusEl.textContent = `playlist ready (${soundCloudPlaylistTracks.length}) / intro skip default 1m30s`;
+      }
     } else {
       stopAdminRefreshLoop();
       manualGodModeOverrideUntilMs = 0;
@@ -1025,14 +1213,14 @@
   function setupGodModeToggle() {
     if (!roomLogo) return;
 
-    roomLogo.addEventListener("click", () => {
-      toggleGodMode();
+    roomLogo.addEventListener("click", async () => {
+      await toggleGodMode();
     });
 
-    roomLogo.addEventListener("keydown", (event) => {
+    roomLogo.addEventListener("keydown", async (event) => {
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
-        toggleGodMode();
+        await toggleGodMode();
       }
     });
   }
@@ -1057,6 +1245,66 @@
     }
   }
 
+
+  function setupAdminPluginWidget() {
+    if (!window.SC || !adminScPluginIframe) return;
+
+    adminPluginWidget = window.SC.Widget(adminScPluginIframe);
+    adminPluginWidget.bind(window.SC.Widget.Events.READY, () => {
+      adminPluginReady = true;
+      adminPluginWidget.setVolume(0);
+    });
+  }
+
+  function syncAdminWidgetToMain() {
+    if (!widget || !adminPluginWidget || !adminPluginReady) return;
+
+    widget.getCurrentSoundIndex((mainIndex) => {
+      if (!Number.isFinite(mainIndex)) return;
+
+      adminPluginWidget.getCurrentSoundIndex((adminIndex) => {
+        const alignPosition = () => {
+          widget.getPosition((mainPosMs) => {
+            if (!Number.isFinite(mainPosMs)) return;
+
+            adminPluginWidget.getPosition((adminPosMs) => {
+              if (!Number.isFinite(adminPosMs) || Math.abs(adminPosMs - mainPosMs) > 7000) {
+                adminPluginWidget.seekTo(mainPosMs);
+              }
+            });
+          });
+        };
+
+        if (!Number.isFinite(adminIndex) || adminIndex !== mainIndex) {
+          adminPluginWidget.load(PLAYLIST_URL, {
+            auto_play: true,
+            hide_related: false,
+            show_user: true,
+            show_comments: true,
+            show_reposts: false,
+            show_teaser: true,
+            start_track: mainIndex,
+          });
+          window.setTimeout(alignPosition, 900);
+          return;
+        }
+
+        alignPosition();
+      });
+    });
+  }
+
+  function startAdminWidgetSyncLoop() {
+    if (adminWidgetSyncIntervalId != null) {
+      window.clearInterval(adminWidgetSyncIntervalId);
+      adminWidgetSyncIntervalId = null;
+    }
+
+    syncAdminWidgetToMain();
+    adminWidgetSyncIntervalId = window.setInterval(() => {
+      syncAdminWidgetToMain();
+    }, 2500);
+  }
   function setupSoundCloudWidget(initialState) {
     pendingRadioState = initialState || null;
 
@@ -1098,9 +1346,10 @@
 
       if (pendingRadioState) {
         const expectedPositionMs = getExpectedPositionMs(pendingRadioState);
-        if (Number.isFinite(expectedPositionMs)) {
-          widget.seekTo(expectedPositionMs);
-        }
+        const targetPositionMs = Number.isFinite(expectedPositionMs)
+          ? getStartPositionMs(expectedPositionMs)
+          : getStartPositionMs(pendingRadioState.positionMs);
+        widget.seekTo(targetPositionMs);
         pendingRadioState = null;
       } else if (fallbackMode && Number.isFinite(pendingFallbackSeekMs)) {
         widget.seekTo(pendingFallbackSeekMs);
@@ -1110,16 +1359,19 @@
       applyUserVolume();
       updateTrackTitle(true);
       updateTransportLabel();
+      syncAdminWidgetToMain();
     });
 
     widget.bind(window.SC.Widget.Events.PAUSE, () => {
       isPlaying = false;
       updateTransportLabel();
+      syncAdminWidgetToMain();
     });
 
     widget.bind(window.SC.Widget.Events.FINISH, () => {
       isPlaying = false;
       updateTransportLabel();
+      syncAdminWidgetToMain();
     });
   }
 
@@ -1131,14 +1383,18 @@
     setupGodModeToggle();
     setupGodModeControls();
     resetNowPlayingUi();
+    updateTransportLabel();
 
     const radioState = await fetchRadioState();
+    setupAdminPluginWidget();
     setupSoundCloudWidget(radioState);
 
     startVisualizer();
     startRadioResyncLoop();
     startNowPlayingRefreshLoop();
     startListenerHeartbeatLoop();
+    startAdminWidgetSyncLoop();
+    setupGlobalTapToStart();
 
     renderPlaylistFromCurrentData();
 
@@ -1197,8 +1453,15 @@
     if (listenerHeartbeatIntervalId != null) {
       window.clearInterval(listenerHeartbeatIntervalId);
     }
+    if (adminWidgetSyncIntervalId != null) {
+      window.clearInterval(adminWidgetSyncIntervalId);
+    }
   });
 })();
+
+
+
+
 
 
 
