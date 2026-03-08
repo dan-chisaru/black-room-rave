@@ -175,8 +175,8 @@ body {
   margin: 0 auto 1rem;
   color: rgba(255, 255, 255, 0.72);
   font-size: 0.8rem;
-  letter-spacing: 0.35em;
-  text-transform: lowercase;
+  letter-spacing: 0.12em;
+  text-transform: none;
   cursor: pointer;
   outline: none;
   position: relative;
@@ -254,3 +254,4 @@ body {
     max-width: 8px;
   }
 }
+

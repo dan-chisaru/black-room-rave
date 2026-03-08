@@ -1,7 +1,17 @@
 (() => {
-  const RADIO_STATE_URL = "http://localhost:4000/api/radio-state";
+  const RADIO_STATE_URL =
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1"
+      ? "http://localhost:4000/api/radio-state"
+      : "https://black-room-rave.onrender.com/api/radio-state";
+  const RADIO_BOOTSTRAP_URL = RADIO_STATE_URL.replace(
+    "/api/radio-state",
+    "/api/radio-bootstrap"
+  );
   const PLAYLIST_URL =
     "https://soundcloud.com/trommelmusic/sets/trommel-podcast";
+  const RESYNC_INTERVAL_MS = 5 * 1000;
+  const MAX_DRIFT_MS = 3 * 1000;
 
   const room = document.getElementById("room");
   const transportButton = document.getElementById("transport-button");
@@ -20,6 +30,11 @@
   let hasSyncedToRadio = false;
   let trackDurationMs = null;
   let trackTimeIntervalId = null;
+  let radioResyncIntervalId = null;
+  let fallbackMode = false;
+  let bootstrapSubmitted = false;
+  let pendingFallbackSeekMs = null;
+  let userStopped = false;
 
   function formatTime(ms) {
     if (!Number.isFinite(ms) || ms < 0) return "--:--";
@@ -27,6 +42,87 @@
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
     return `${minutes}:${String(seconds).padStart(2, "0")}`;
+  }
+
+  function getExpectedPositionMs(radioState) {
+    if (!radioState || typeof radioState.positionMs !== "number") return null;
+    const serverTimeMs =
+      typeof radioState.serverTimeMs === "number" ? radioState.serverTimeMs : Date.now();
+    const networkLagMs = Math.max(0, Date.now() - serverTimeMs);
+    return radioState.positionMs + networkLagMs;
+  }
+
+  function applyUserVolume() {
+    if (!widget) return;
+    widget.setVolume(userStopped ? 0 : volume);
+  }
+
+  function getRandomFallbackTrackIndex() {
+    return Math.floor(Math.random() * 8);
+  }
+
+  function getRandomFallbackPositionMs() {
+    const minMs = 60 * 1000;
+    const maxMs = 55 * 60 * 1000;
+    return minMs + Math.floor(Math.random() * (maxMs - minMs));
+  }
+
+  function startFallbackPlayback() {
+    fallbackMode = true;
+    bootstrapSubmitted = false;
+    pendingFallbackSeekMs = getRandomFallbackPositionMs();
+
+    widget.load(PLAYLIST_URL, {
+      auto_play: true,
+      hide_related: true,
+      show_user: false,
+      show_comments: false,
+      show_reposts: false,
+      show_teaser: false,
+      start_track: getRandomFallbackTrackIndex(),
+    });
+  }
+
+  async function submitBootstrapFromCurrentPlayback() {
+    if (!widget || bootstrapSubmitted) return false;
+
+    const trackIndex = await new Promise((resolve) => {
+      if (typeof widget.getCurrentSoundIndex !== "function") {
+        resolve(0);
+        return;
+      }
+
+      widget.getCurrentSoundIndex((idx) => {
+        resolve(Number.isFinite(idx) ? idx : 0);
+      });
+    });
+
+    const positionMs = await new Promise((resolve) => {
+      widget.getPosition((pos) => {
+        resolve(Number.isFinite(pos) ? Math.max(0, Math.floor(pos)) : 0);
+      });
+    });
+
+    try {
+      const res = await fetch(RADIO_BOOTSTRAP_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIndex, positionMs }),
+      });
+
+      if (!res.ok) return false;
+
+      const data = await res.json();
+      if (data?.accepted) {
+        bootstrapSubmitted = true;
+        return true;
+      }
+
+      return false;
+    } catch (err) {
+      console.error("Bootstrap submit error", err);
+      return false;
+    }
   }
 
   function startTrackTimeLoop() {
@@ -52,6 +148,69 @@
     }, 1000);
   }
 
+  function syncWithRadioState(radioState) {
+    if (!widget || !radioState) return;
+
+    const expectedPositionMs = getExpectedPositionMs(radioState);
+    if (!Number.isFinite(expectedPositionMs)) return;
+
+    const playlistUrl = radioState.playlistUrl || PLAYLIST_URL;
+
+    if (typeof widget.getCurrentSoundIndex === "function") {
+      widget.getCurrentSoundIndex((currentIndex) => {
+        if (typeof currentIndex === "number" && currentIndex !== radioState.trackIndex) {
+          pendingRadioState = radioState;
+          widget.load(playlistUrl, {
+            auto_play: true,
+            hide_related: true,
+            show_user: false,
+            show_comments: false,
+            show_reposts: false,
+            show_teaser: false,
+            start_track: radioState.trackIndex,
+          });
+          return;
+        }
+
+        widget.getPosition((currentPositionMs) => {
+          const driftMs = Math.abs((currentPositionMs ?? 0) - expectedPositionMs);
+          if (driftMs > MAX_DRIFT_MS) {
+            widget.seekTo(expectedPositionMs);
+          }
+        });
+      });
+      return;
+    }
+
+    widget.getPosition((currentPositionMs) => {
+      const driftMs = Math.abs((currentPositionMs ?? 0) - expectedPositionMs);
+      if (driftMs > MAX_DRIFT_MS) {
+        widget.seekTo(expectedPositionMs);
+      }
+    });
+  }
+
+  function startRadioResyncLoop() {
+    if (radioResyncIntervalId != null) {
+      window.clearInterval(radioResyncIntervalId);
+      radioResyncIntervalId = null;
+    }
+
+    radioResyncIntervalId = window.setInterval(async () => {
+      if (!widget || !isPlaying) return;
+
+      const latestState = await fetchRadioState();
+      if (!latestState) return;
+
+      if (fallbackMode && !bootstrapSubmitted) {
+        await submitBootstrapFromCurrentPlayback();
+      }
+
+      fallbackMode = false;
+      syncWithRadioState(latestState);
+    }, RESYNC_INTERVAL_MS);
+  }
+
   function setupSoundCloudWidget(initialState) {
     pendingRadioState = initialState || null;
 
@@ -59,7 +218,7 @@
     widget = window.SC.Widget(scIframe);
 
     widget.bind(window.SC.Widget.Events.READY, () => {
-      widget.setVolume(volume);
+      applyUserVolume();
 
       if (pendingRadioState && !hasSyncedToRadio) {
         hasSyncedToRadio = true;
@@ -74,6 +233,7 @@
           start_track: typeof trackIndex === "number" ? trackIndex : 0,
         });
       } else {
+        startFallbackPlayback();
         updateTrackTitle();
         updateTransportLabel();
       }
@@ -82,11 +242,18 @@
     widget.bind(window.SC.Widget.Events.PLAY, () => {
       isPlaying = true;
 
-      if (pendingRadioState && typeof pendingRadioState.positionMs === "number") {
-        widget.seekTo(pendingRadioState.positionMs);
+      if (pendingRadioState) {
+        const expectedPositionMs = getExpectedPositionMs(pendingRadioState);
+        if (Number.isFinite(expectedPositionMs)) {
+          widget.seekTo(expectedPositionMs);
+        }
         pendingRadioState = null;
+      } else if (fallbackMode && Number.isFinite(pendingFallbackSeekMs)) {
+        widget.seekTo(pendingFallbackSeekMs);
+        pendingFallbackSeekMs = null;
       }
 
+      applyUserVolume();
       updateTrackTitle();
       updateTransportLabel();
     });
@@ -102,12 +269,58 @@
     });
   }
 
+  function getArtistName(sound) {
+    if (!sound || typeof sound !== "object") return "Unknown Artist";
+
+    if (typeof sound.title === "string") {
+      const title = sound.title;
+
+      // Expected format example: "trommel - podcast nr - artist name"
+      const dashParts = title
+        .split(" - ")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (dashParts.length >= 3) {
+        return dashParts[dashParts.length - 1];
+      }
+      if (dashParts.length === 2) {
+        return dashParts[1];
+      }
+
+      const pipeParts = title
+        .split(" | ")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (pipeParts.length >= 2) {
+        return pipeParts[pipeParts.length - 1];
+      }
+
+      const colonParts = title
+        .split(": ")
+        .map((part) => part.trim())
+        .filter(Boolean);
+      if (colonParts.length >= 2) {
+        return colonParts[colonParts.length - 1];
+      }
+    }
+
+    const publisherArtist = sound.publisher_metadata?.artist;
+    if (typeof publisherArtist === "string" && publisherArtist.trim()) {
+      return publisherArtist.trim();
+    }
+
+    const userName = sound.user?.username;
+    if (typeof userName === "string" && userName.trim()) {
+      return userName.trim();
+    }
+
+    return "Unknown Artist";
+  }
+
   function updateTrackTitle() {
     if (!widget || !trackTitleEl) return;
     widget.getCurrentSound((sound) => {
-      if (sound && sound.title) {
-        trackTitleEl.textContent = sound.title;
-      }
+      trackTitleEl.textContent = getArtistName(sound);
     });
 
     widget.getDuration((durationMs) => {
@@ -131,7 +344,7 @@
     const smoothedLevels = new Array(barCount).fill(0.1);
 
     function animate(timestamp) {
-      if (isPlaying) {
+      if (isPlaying && !userStopped) {
         const t = timestamp / 1000;
 
         for (let i = 0; i < barCount; i += 1) {
@@ -189,21 +402,39 @@
     }
   }
 
+  async function rejoinLivePlayback() {
+    if (!widget) return;
+
+    try {
+      const latestState = await fetchRadioState();
+      if (latestState) {
+        fallbackMode = false;
+        syncWithRadioState(latestState);
+      }
+    } finally {
+      widget.play();
+    }
+  }
+
   function togglePlayback() {
     if (!widget) return;
 
-    widget.isPaused((paused) => {
-      if (paused) {
-        widget.play();
+    widget.isPaused(async (paused) => {
+      if (userStopped || paused || !isPlaying) {
+        userStopped = false;
+        await rejoinLivePlayback();
+        applyUserVolume();
       } else {
-        widget.pause();
+        userStopped = true;
+        applyUserVolume();
+        updateTransportLabel();
       }
     });
   }
 
   function updateTransportLabel() {
     if (!transportButton) return;
-    transportButton.textContent = isPlaying ? "pause" : "play";
+    transportButton.textContent = userStopped || !isPlaying ? "Play" : "Stop";
   }
 
   function setRadioStatus(online) {
@@ -232,6 +463,7 @@
     const radioState = await fetchRadioState();
     setupSoundCloudWidget(radioState);
     startVisualizer();
+    startRadioResyncLoop();
 
     if (transportButton) {
       transportButton.addEventListener("click", () => {
@@ -249,7 +481,7 @@
         if (Number.isNaN(value)) return;
         volume = Math.min(100, Math.max(0, value));
         if (widget) {
-          widget.setVolume(volume);
+          applyUserVolume();
         }
       });
     }
@@ -267,6 +499,9 @@
     }
     if (trackTimeIntervalId != null) {
       window.clearInterval(trackTimeIntervalId);
+    }
+    if (radioResyncIntervalId != null) {
+      window.clearInterval(radioResyncIntervalId);
     }
   });
 })();
