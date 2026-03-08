@@ -1,8 +1,9 @@
 node_modules/
-backend/node_modules/
-backend/.env
+radio-backend/node_modules/
+radio-backend/.env
 *.log
 dist/
 coverage/
 .DS_Store
 Thumbs.db
+

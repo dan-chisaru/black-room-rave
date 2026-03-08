@@ -1,4 +1,3 @@
-/* Base / reset */
 *,
 *::before,
 *::after {
@@ -38,6 +37,7 @@ body {
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.4);
   pointer-events: none;
+  z-index: 10;
 }
 
 .radio-status-dot {
@@ -61,7 +61,6 @@ body {
   box-shadow: 0 0 6px 0 rgba(255, 75, 75, 0.6);
 }
 
-/* Room */
 .room {
   min-height: 100vh;
   background-color: #000;
@@ -83,16 +82,36 @@ body {
 
 .room-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: center;
+  flex-direction: column;
+  gap: 0.4rem;
   padding-top: 0.5rem;
-  min-height: 64px;
+  min-height: 74px;
 }
 
 .room-logo {
   height: 35vh;
   max-height: 260px;
   width: auto;
+  cursor: pointer;
+}
+
+.room-logo:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.3);
+  outline-offset: 6px;
+}
+
+.god-hint {
+  margin: 0;
+  font-size: 0.56rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.25);
+}
+
+body.god-mode .god-hint {
+  color: rgba(255, 255, 255, 0.52);
 }
 
 .room-visualizer-wrapper {
@@ -167,7 +186,6 @@ body {
   border: 0;
 }
 
-/* Transport */
 .transport-button {
   background: transparent;
   border: none;
@@ -240,6 +258,174 @@ body {
   cursor: pointer;
 }
 
+.god-panel {
+  display: none;
+  background: rgba(255, 255, 255, 0.035);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 1rem;
+  min-height: 100vh;
+}
+
+.god-title {
+  margin: 0 0 0.9rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.god-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+}
+
+.god-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+}
+
+.god-item strong {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.playlist-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.45rem;
+  margin-bottom: 0.65rem;
+}
+
+.playlist-btn {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.04);
+  color: rgba(255, 255, 255, 0.86);
+  font-size: 0.52rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 0.42rem 0.3rem;
+  cursor: pointer;
+}
+
+.playlist-btn:hover,
+.playlist-btn:focus-visible {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.playlist-status {
+  margin: 0 0 0.7rem;
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.48);
+}
+
+.playlist-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+
+.playlist-list li {
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.02);
+  padding: 0.55rem 0.6rem;
+}
+
+.playlist-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.playlist-track {
+  margin: 0 0 0.3rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.playlist-meta {
+  margin: 0;
+  font-size: 0.55rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.52);
+}
+
+.playlist-order {
+  font-size: 0.52rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.playlist-move {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.playlist-move button {
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.03);
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 0.56rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+}
+
+.playlist-live {
+  border-color: rgba(66, 255, 155, 0.6) !important;
+  box-shadow: 0 0 0 1px rgba(66, 255, 155, 0.2) inset;
+}
+
+body.god-mode .page {
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(320px, 960px) minmax(220px, 280px);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+body.god-mode .god-panel {
+  display: block;
+}
+
+@media (max-width: 1050px) {
+  body.god-mode .page {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+
+  .god-panel {
+    min-height: auto;
+    border-left: none;
+    border-right: none;
+  }
+
+  body.god-mode .god-panel-left {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .room {
+    min-height: auto;
+  }
+}
+
 @media (max-width: 600px) {
   .room-inner {
     padding-inline: 1.25rem;
@@ -253,5 +439,12 @@ body {
   .bar {
     max-width: 8px;
   }
-}
 
+  .god-item {
+    font-size: 0.54rem;
+  }
+
+  .playlist-track {
+    font-size: 0.58rem;
+  }
+}

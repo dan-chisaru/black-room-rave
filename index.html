@@ -8,7 +8,7 @@
     <meta http-equiv="Expires" content="0" />
     <meta
       name="description"
-      content="Black Room Rave – a dark, minimal, underground online room with continuous techno radio."
+      content="Black Room Rave - a dark, minimal, underground online room with continuous techno radio."
     />
     <title>Black Room Rave</title>
 
@@ -19,14 +19,45 @@
       rel="stylesheet"
     />
 
-    <link rel="stylesheet" href="style.css?v=20260308-3" />
+    <link rel="stylesheet" href="style.css?v=20260308-5" />
   </head>
   <body>
     <div class="radio-status" id="radio-status" aria-live="polite">
       <span class="radio-status-dot" aria-hidden="true"></span>
       <span class="radio-status-label">radio</span>
     </div>
+
     <main class="page" aria-label="Black Room Rave">
+      <aside class="god-panel god-panel-left" id="god-panel-left" aria-label="God Mode technical panel">
+        <p class="god-title">God Mode / System</p>
+        <div class="god-grid">
+          <div class="god-item">
+            <span>current listeners</span>
+            <strong id="admin-current-listeners">--</strong>
+          </div>
+          <div class="god-item">
+            <span>max concurrent</span>
+            <strong id="admin-max-listeners">--</strong>
+          </div>
+          <div class="god-item">
+            <span>total sessions</span>
+            <strong id="admin-total-sessions">--</strong>
+          </div>
+          <div class="god-item">
+            <span>server uptime</span>
+            <strong id="admin-uptime">--</strong>
+          </div>
+          <div class="god-item">
+            <span>bootstrap</span>
+            <strong id="admin-bootstrap">--</strong>
+          </div>
+          <div class="god-item">
+            <span>live track index</span>
+            <strong id="admin-live-track">--</strong>
+          </div>
+        </div>
+      </aside>
+
       <section class="room room-visible" id="room" aria-label="Black Room Rave radio room">
         <div class="room-inner">
           <header class="room-header">
@@ -34,7 +65,12 @@
               src="assets/6alb.png"
               alt="Black Room Rave logo"
               class="room-logo"
+              id="room-logo"
+              role="button"
+              tabindex="0"
+              aria-label="Toggle God Mode"
             />
+            <p class="god-hint" id="god-hint">click logo for god mode</p>
           </header>
 
           <div class="room-visualizer-wrapper">
@@ -88,15 +124,20 @@
           src="https://w.soundcloud.com/player/?url=https%3A//soundcloud.com/trommelmusic/sets/trommel-podcast&color=%23000000&auto_play=true&continuous_play=true&hide_related=true&show_comments=false&show_user=true&show_reposts=false&show_teaser=true"
         ></iframe>
       </section>
+
+      <aside class="god-panel god-panel-right" id="god-panel-right" aria-label="God Mode playlist panel">
+        <p class="god-title">Playlist / Rotation</p>
+        <div class="playlist-controls">
+          <button class="playlist-btn" id="admin-load-playlist" type="button">Load SC</button>
+          <button class="playlist-btn" id="admin-shuffle-playlist" type="button">Shuffle</button>
+          <button class="playlist-btn" id="admin-reset-playlist" type="button">Reset</button>
+        </div>
+        <p class="playlist-status" id="admin-playlist-status">waiting for playlist...</p>
+        <ul class="playlist-list" id="admin-playlist-list"></ul>
+      </aside>
     </main>
 
-    <!-- SoundCloud Widget API -->
     <script src="https://w.soundcloud.com/player/api.js"></script>
-    <script src="script.js?v=20260308-3" defer></script>
+    <script src="script.js?v=20260308-5" defer></script>
   </body>
 </html>
-
-
-
-
-
