@@ -87,6 +87,7 @@
   let pendingFallbackSeekMs = null;
   let userStopped = false;
   let hasActivatedAudioGesture = false;
+  let pendingUserStartGesture = false;
 
   let godModeEnabled = false;
   let godPlaylistAutoPrepared = false;
@@ -530,10 +531,16 @@
   }
 
   async function startAudioFromGesture() {
-    if (!widget) return false;
-
     hasActivatedAudioGesture = true;
     userStopped = false;
+
+    if (!widget) {
+      pendingUserStartGesture = true;
+      updateTransportLabel();
+      return true;
+    }
+
+    pendingUserStartGesture = false;
     await rejoinLivePlayback();
     applyUserVolume();
     updateTransportLabel();
@@ -562,7 +569,12 @@
   }
 
   function togglePlayback() {
-    if (!widget) return;
+    if (!widget) {
+      if (!hasActivatedAudioGesture) {
+        void startAudioFromGesture();
+      }
+      return;
+    }
 
     widget.isPaused(async (paused) => {
       if (userStopped || paused || !isPlaying) {
@@ -1355,9 +1367,12 @@
 
     widget.bind(window.SC.Widget.Events.READY, async () => {
       applyUserVolume();
-      await loadPlaylistFromWidget(false);
+      void loadPlaylistFromWidget(false);
 
       if (widgetReadyInitialized) {
+        if (pendingUserStartGesture) {
+          void startAudioFromGesture();
+        }
         window.setTimeout(() => updateTrackTitle(true), 300);
         return;
       }
@@ -1385,6 +1400,10 @@
         startFallbackPlayback();
         window.setTimeout(() => updateTrackTitle(true), 700);
         updateTransportLabel();
+      }
+
+      if (pendingUserStartGesture) {
+        void startAudioFromGesture();
       }
     });
 
@@ -1432,9 +1451,9 @@
     resetNowPlayingUi();
     updateTransportLabel();
 
-    const radioState = await fetchRadioState();
+    const radioStatePromise = fetchRadioState();
     setupAdminPluginWidget();
-    setupSoundCloudWidget(radioState);
+    setupSoundCloudWidget(null);
 
     startVisualizer();
     startRadioResyncLoop();
@@ -1442,6 +1461,26 @@
     startListenerHeartbeatLoop();
     startAdminWidgetSyncLoop();
     setupGlobalTapToStart();
+
+    radioStatePromise
+      .then((radioState) => {
+        if (!radioState) return;
+        pendingRadioState = radioState;
+
+        if (widgetReadyInitialized) {
+          if (radioState.bootstrapAccepted === false) {
+            if (!isPlaying) {
+              startFallbackPlayback();
+            }
+          } else {
+            hasSyncedToRadio = true;
+            syncWithRadioState(radioState);
+          }
+
+          updateTrackTitle(true);
+        }
+      })
+      .catch((_err) => {});
 
     renderPlaylistFromCurrentData();
 
@@ -1505,59 +1544,4 @@
     }
   });
 })();
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
