@@ -191,7 +191,8 @@
   async function updateLiveCommentForSound(sound) {
     if (!liveCommentEl) return;
 
-    const trackId = Number.isFinite(sound?.id) ? sound.id : null;
+    const parsedTrackId = Number.parseInt(sound?.id, 10);
+    const trackId = Number.isFinite(parsedTrackId) ? parsedTrackId : null;
     if (!Number.isFinite(trackId)) {
       activeCommentTrackId = null;
       activeTimelineComments = [];
@@ -1458,6 +1459,8 @@
     }
   });
 })();
+
+
 
 
 
