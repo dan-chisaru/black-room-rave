@@ -575,6 +575,15 @@
     }
 
     userStopped = false;
+    applyUserVolume();
+    updateTransportLabel();
+
+    // Fire play immediately in click context so mobile autoplay policies allow audio.
+    try {
+      widget.play();
+    } catch (_err) {
+      // Ignore; load/sync path below will retry.
+    }
 
     void (async () => {
       const latestState = await fetchRadioState();
@@ -1512,5 +1521,3 @@
     }
   });
 })();
-
-
