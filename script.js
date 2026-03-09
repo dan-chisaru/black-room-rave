@@ -540,15 +540,17 @@
       pendingRadioState &&
       typeof pendingRadioState.trackIndex === "number" &&
       Number.isFinite(pendingRadioState.trackIndex);
-    const serverIsPlaying = hasServerTrack && pendingRadioState.bootstrapAccepted !== false;
 
+    if (!hasServerTrack) return;
+
+    const serverIsPlaying = pendingRadioState.bootstrapAccepted !== false;
     startupPlaybackChosen = true;
 
     if (serverIsPlaying) {
       hasSyncedToRadio = true;
       const { playlistUrl, trackIndex } = pendingRadioState;
       widget.load(playlistUrl || PLAYLIST_URL, {
-        auto_play: true,
+        auto_play: false,
         hide_related: true,
         show_user: false,
         show_comments: false,
@@ -556,29 +558,49 @@
         show_teaser: false,
         start_track: typeof trackIndex === "number" ? trackIndex : 0,
       });
+      window.setTimeout(() => updateTrackTitle(true), 700);
     } else {
       pendingRadioState = null;
-      startFallbackPlayback();
-      updateTransportLabel();
     }
-
-    window.setTimeout(() => updateTrackTitle(true), 700);
   }
 
   function togglePlayback() {
     if (!widget) return;
 
-    widget.isPaused(async (paused) => {
-      if (userStopped || paused || !isPlaying) {
-        userStopped = false;
-        await rejoinLivePlayback();
-        applyUserVolume();
+    if (!userStopped && isPlaying) {
+      userStopped = true;
+      applyUserVolume();
+      updateTransportLabel();
+      return;
+    }
+
+    userStopped = false;
+
+    void (async () => {
+      const latestState = await fetchRadioState();
+
+      if (latestState && latestState.bootstrapAccepted !== false) {
+        fallbackMode = false;
+        pendingRadioState = latestState;
+        hasSyncedToRadio = true;
+
+        widget.load(latestState.playlistUrl || PLAYLIST_URL, {
+          auto_play: true,
+          hide_related: true,
+          show_user: false,
+          show_comments: false,
+          show_reposts: false,
+          show_teaser: false,
+          start_track: Number.isFinite(latestState.trackIndex) ? latestState.trackIndex : 0,
+        });
       } else {
-        userStopped = true;
-        applyUserVolume();
-        updateTransportLabel();
+        pendingRadioState = null;
+        startFallbackPlayback();
       }
-    });
+
+      applyUserVolume();
+      updateTransportLabel();
+    })();
   }
 
   function updateTransportLabel() {
@@ -1490,3 +1512,5 @@
     }
   });
 })();
+
+
