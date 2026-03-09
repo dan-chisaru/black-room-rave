@@ -12,7 +12,6 @@
   const ADMIN_STATE_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-state");
   const ADMIN_PLAYLIST_ORDER_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-playlist-order");
   const ADMIN_JUMP_TRACK_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/admin-jump-track");
-  const TRACK_COMMENTS_URL = RADIO_STATE_URL.replace("/api/radio-state", "/api/track-comments");
   const LISTENER_HEARTBEAT_URL = RADIO_STATE_URL.replace(
     "/api/radio-state",
     "/api/listener-heartbeat"
@@ -33,6 +32,9 @@
   const GOD_MODE_UNLOCKED = true;
   const MANUAL_GOD_MODE_OVERRIDE_MS = 2 * 60 * 1000;
   const INTRO_SKIP_DEFAULT_MS = 90 * 1000;
+  const COLD_START_SKIP_FIRST_AFTER_SHUFFLE = true;
+  const COLD_START_RANDOM_POSITION_MIN_MS = INTRO_SKIP_DEFAULT_MS;
+  const COLD_START_RANDOM_POSITION_MAX_MS = 55 * 60 * 1000;
   const ADMIN_SEEK_SYNC_GRACE_MS = 8000;
   const ADMIN_SEEK_DEBOUNCE_MS = 900;
 
@@ -41,8 +43,6 @@
   const transportButton = document.getElementById("transport-button");
   const trackTitleEl = document.getElementById("track-title");
   const trackTimeEl = document.getElementById("track-time");
-  const liveCommentEl = document.getElementById("live-comment");
-  const liveCommentDebugEl = document.getElementById("live-comment-debug");
   const visualizerEl = document.getElementById("visualizer");
   const bars = visualizerEl ? Array.from(visualizerEl.querySelectorAll(".bar")) : [];
   const scIframe = document.getElementById("sc-player");
@@ -100,11 +100,6 @@
   let godPlaylistOrder = [];
   let adminPluginWidget = null;
   let adminPluginReady = false;
-  let activeCommentTrackId = null;
-  let activeTimelineComments = [];
-  let activeCommentText = "";
-  let activeCommentSource = "idle";
-  let activeCommentPositionMs = 0;
   const trackSeenCounts = new Map();
   let lastObservedTrackIndex = null;
 
@@ -146,134 +141,38 @@
     return INTRO_SKIP_DEFAULT_MS;
   }
 
-  function sanitizeCommentText(value) {
-    if (typeof value !== "string") return "";
-    return value.replace(/\s+/g, " ").trim();
-  }
-
-  async function fetchTrackTimelineComments(trackId) {
-    if (!Number.isFinite(trackId) || trackId <= 0) {
-      return { comments: [], source: "invalid_track_id" };
-    }
-
-    try {
-      const res = await fetch(`${TRACK_COMMENTS_URL}?trackId=${trackId}`, { cache: "no-store" });
-      if (!res.ok) {
-        return { comments: [], source: `http_${res.status}` };
-      }
-
-      const data = await res.json();
-      if (!Array.isArray(data?.comments)) {
-        return { comments: [], source: data?.source || "invalid_payload" };
-      }
-
-      const comments = data.comments
-        .map((comment) => ({
-          timestampMs: Number.isFinite(comment?.timestampMs)
-            ? Math.max(0, Math.floor(comment.timestampMs))
-            : null,
-          body: sanitizeCommentText(comment?.body),
-        }))
-        .filter((comment) => Number.isFinite(comment.timestampMs) && comment.body)
-        .sort((a, b) => a.timestampMs - b.timestampMs);
-
-      return { comments, source: data?.source || "ok" };
-    } catch (_err) {
-      return { comments: [], source: "fetch_error" };
-    }
-  }
-
-  function renderCommentDebug() {
-    if (!liveCommentDebugEl) return;
-
-    const trackLabel = Number.isFinite(activeCommentTrackId) ? String(activeCommentTrackId) : "none";
-    const countLabel = Array.isArray(activeTimelineComments) ? activeTimelineComments.length : 0;
-    const posLabel = formatTime(activeCommentPositionMs || 0);
-
-    liveCommentDebugEl.textContent = `comments debug | track ${trackLabel} | source ${activeCommentSource} | loaded ${countLabel} | at ${posLabel}`;
-  }
-
-  function updateLiveCommentAtPosition(positionMs) {
-    if (!liveCommentEl) return;
-
-    const elapsed = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
-    activeCommentPositionMs = elapsed;
-
-    if (!Array.isArray(activeTimelineComments) || !activeTimelineComments.length) {
-      activeCommentText = "";
-      liveCommentEl.textContent = "";
-      renderCommentDebug();
-      return;
-    }
-
-    let active = null;
-    for (let i = 0; i < activeTimelineComments.length; i += 1) {
-      const comment = activeTimelineComments[i];
-      if (comment.timestampMs > elapsed) break;
-      active = comment;
-    }
-
-    const nextText = active ? active.body : "";
-    if (nextText !== activeCommentText) {
-      activeCommentText = nextText;
-      liveCommentEl.textContent = nextText;
-    }
-
-    renderCommentDebug();
-  }
-
-  async function updateLiveCommentForSound(sound) {
-    if (!liveCommentEl) return;
-
-    const parsedTrackId = Number.parseInt(sound?.id, 10);
-    const trackId = Number.isFinite(parsedTrackId) ? parsedTrackId : null;
-
-    if (!Number.isFinite(trackId)) {
-      activeCommentTrackId = null;
-      activeTimelineComments = [];
-      activeCommentText = "";
-      activeCommentSource = "no_track_id";
-      activeCommentPositionMs = 0;
-      liveCommentEl.textContent = "";
-      renderCommentDebug();
-      return;
-    }
-
-    if (trackId !== activeCommentTrackId) {
-      activeCommentTrackId = trackId;
-      activeTimelineComments = [];
-      activeCommentText = "";
-      activeCommentSource = "loading";
-      activeCommentPositionMs = 0;
-      liveCommentEl.textContent = "";
-      renderCommentDebug();
-
-      const result = await fetchTrackTimelineComments(trackId);
-      activeTimelineComments = result.comments;
-      activeCommentSource = result.source;
-      renderCommentDebug();
-    }
-
-    if (!widget) {
-      activeCommentSource = "no_widget";
-      liveCommentEl.textContent = "";
-      renderCommentDebug();
-      return;
-    }
-
-    widget.getPosition((positionMs) => {
-      updateLiveCommentAtPosition(positionMs);
-    });
-  }
   function applyUserVolume() {
     if (!widget) return;
     widget.setVolume(userStopped ? 0 : volume);
   }
 
-  function getRandomFallbackTrackIndex() {
-    const pool = godPlaylistOrder.length
+  function shuffleTrackIndexes(indexes) {
+    const shuffled = [...indexes];
+    for (let i = shuffled.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    return shuffled;
+  }
+
+  function getStartupFallbackPool() {
+    const sourcePool = godPlaylistOrder.length
       ? godPlaylistOrder
-      : soundCloudPlaylistTracks.map((t) => t.index);
+      : soundCloudPlaylistTracks.map((track) => track.index);
+
+    if (!sourcePool.length) return [];
+
+    const shuffled = shuffleTrackIndexes(sourcePool);
+    if (shuffled.length <= 1) return shuffled;
+
+    if (!COLD_START_SKIP_FIRST_AFTER_SHUFFLE) return shuffled;
+
+    // Skip first item after shuffle to avoid repetitive cold starts.
+    return shuffled.slice(1);
+  }
+
+  function getRandomFallbackTrackIndex() {
+    const pool = getStartupFallbackPool();
 
     if (pool.length > 0) {
       const randomPos = Math.floor(Math.random() * pool.length);
@@ -284,8 +183,8 @@
   }
 
   function getRandomFallbackPositionMs() {
-    const minMs = INTRO_SKIP_DEFAULT_MS;
-    const maxMs = 55 * 60 * 1000;
+    const minMs = COLD_START_RANDOM_POSITION_MIN_MS;
+    const maxMs = Math.max(minMs + 1000, COLD_START_RANDOM_POSITION_MAX_MS);
     return minMs + Math.floor(Math.random() * (maxMs - minMs));
   }
 
@@ -367,8 +266,6 @@
             trackTimeEl.textContent = `${formatTime(elapsed)}`;
           }
         }
-
-        updateLiveCommentAtPosition(elapsed);
       });
     }, 1000);
   }
@@ -376,10 +273,6 @@
   function resetNowPlayingUi() {
     if (trackTitleEl) trackTitleEl.textContent = "loading...";
     if (trackTimeEl) trackTimeEl.textContent = "--:-- / --:--";
-    if (liveCommentEl) liveCommentEl.textContent = "";
-    activeCommentSource = "idle";
-    activeCommentPositionMs = 0;
-    renderCommentDebug();
   }
   function startNowPlayingRefreshLoop() {
     if (nowPlayingRefreshIntervalId != null) {
@@ -534,7 +427,6 @@
     if (!widget || !trackTitleEl) return;
     widget.getCurrentSound((sound) => {
       trackTitleEl.textContent = getArtistName(sound);
-      void updateLiveCommentForSound(sound);
     });
 
     updateLiveTrackFromWidget(refreshDuration);
@@ -1471,7 +1363,12 @@
       }
       widgetReadyInitialized = true;
 
-      if (pendingRadioState && !hasSyncedToRadio) {
+      if (pendingRadioState && pendingRadioState.bootstrapAccepted === false) {
+        pendingRadioState = null;
+        startFallbackPlayback();
+        window.setTimeout(() => updateTrackTitle(true), 700);
+        updateTransportLabel();
+      } else if (pendingRadioState && !hasSyncedToRadio) {
         hasSyncedToRadio = true;
         const { playlistUrl, trackIndex } = pendingRadioState;
         widget.load(playlistUrl || PLAYLIST_URL, {
@@ -1608,6 +1505,16 @@
     }
   });
 })();
+
+
+
+
+
+
+
+
+
+
 
 
 
