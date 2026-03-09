@@ -408,10 +408,20 @@ app.get("/api/track-comments", async (req, res) => {
     source: data.reason,
   });
 });
+app.get("/api/debug-env", (req, res) => {
+  const hasClientId = typeof SOUNDCLOUD_CLIENT_ID === "string" && SOUNDCLOUD_CLIENT_ID.length > 0;
+
+  return res.json({
+    ok: true,
+    hasClientId,
+    clientIdLength: hasClientId ? SOUNDCLOUD_CLIENT_ID.length : 0,
+  });
+});
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Radio state server listening on http://localhost:${PORT}`);
 });
+
 
 
 
