@@ -543,25 +543,8 @@
 
     if (!hasServerTrack) return;
 
-    const serverIsPlaying = pendingRadioState.bootstrapAccepted !== false;
+    // Do not auto-play or auto-fallback on refresh; Play button controls audio start.
     startupPlaybackChosen = true;
-
-    if (serverIsPlaying) {
-      hasSyncedToRadio = true;
-      const { playlistUrl, trackIndex } = pendingRadioState;
-      widget.load(playlistUrl || PLAYLIST_URL, {
-        auto_play: false,
-        hide_related: true,
-        show_user: false,
-        show_comments: false,
-        show_reposts: false,
-        show_teaser: false,
-        start_track: typeof trackIndex === "number" ? trackIndex : 0,
-      });
-      window.setTimeout(() => updateTrackTitle(true), 700);
-    } else {
-      pendingRadioState = null;
-    }
   }
 
   function togglePlayback() {
@@ -588,7 +571,7 @@
     void (async () => {
       const latestState = await fetchRadioState();
 
-      if (latestState && latestState.bootstrapAccepted !== false) {
+      if (latestState && Number.isFinite(latestState.trackIndex)) {
         fallbackMode = false;
         pendingRadioState = latestState;
         hasSyncedToRadio = true;
