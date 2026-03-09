@@ -88,6 +88,8 @@
   let userStopped = false;
   let hasActivatedAudioGesture = false;
   let pendingUserStartGesture = false;
+  let radioStateResolved = false;
+  let startupPlaybackChosen = false;
 
   let godModeEnabled = false;
   let godPlaylistAutoPrepared = false;
@@ -531,20 +533,58 @@
   }
 
   async function startAudioFromGesture() {
-    hasActivatedAudioGesture = true;
-    userStopped = false;
-
-    if (!widget) {
+    if (!widget || !widgetReadyInitialized) {
       pendingUserStartGesture = true;
       updateTransportLabel();
-      return true;
+      return false;
     }
 
+    hasActivatedAudioGesture = true;
+    userStopped = false;
     pendingUserStartGesture = false;
     await rejoinLivePlayback();
     applyUserVolume();
     updateTransportLabel();
     return true;
+  }
+
+  // Startup rule: follow server state when server is already live; use shuffled fallback only when server is not live.
+  function applyStartupPlaybackStrategy() {
+    if (!widget || !widgetReadyInitialized || startupPlaybackChosen || !radioStateResolved) {
+      return;
+    }
+
+    const hasServerTrack =
+      pendingRadioState &&
+      typeof pendingRadioState.trackIndex === "number" &&
+      Number.isFinite(pendingRadioState.trackIndex);
+    const serverIsPlaying = hasServerTrack && pendingRadioState.bootstrapAccepted !== false;
+
+    startupPlaybackChosen = true;
+
+    if (serverIsPlaying) {
+      hasSyncedToRadio = true;
+      const { playlistUrl, trackIndex } = pendingRadioState;
+      widget.load(playlistUrl || PLAYLIST_URL, {
+        auto_play: true,
+        hide_related: true,
+        show_user: false,
+        show_comments: false,
+        show_reposts: false,
+        show_teaser: false,
+        start_track: typeof trackIndex === "number" ? trackIndex : 0,
+      });
+    } else {
+      pendingRadioState = null;
+      startFallbackPlayback();
+      updateTransportLabel();
+    }
+
+    window.setTimeout(() => updateTrackTitle(true), 700);
+
+    if (pendingUserStartGesture) {
+      void startAudioFromGesture();
+    }
   }
 
   function setupGlobalTapToStart() {
@@ -1377,34 +1417,7 @@
         return;
       }
       widgetReadyInitialized = true;
-
-      if (pendingRadioState && pendingRadioState.bootstrapAccepted === false) {
-        pendingRadioState = null;
-        startFallbackPlayback();
-        window.setTimeout(() => updateTrackTitle(true), 700);
-        updateTransportLabel();
-      } else if (pendingRadioState && !hasSyncedToRadio) {
-        hasSyncedToRadio = true;
-        const { playlistUrl, trackIndex } = pendingRadioState;
-        widget.load(playlistUrl || PLAYLIST_URL, {
-          auto_play: true,
-          hide_related: true,
-          show_user: false,
-          show_comments: false,
-          show_reposts: false,
-          show_teaser: false,
-          start_track: typeof trackIndex === "number" ? trackIndex : 0,
-        });
-        window.setTimeout(() => updateTrackTitle(true), 700);
-      } else {
-        startFallbackPlayback();
-        window.setTimeout(() => updateTrackTitle(true), 700);
-        updateTransportLabel();
-      }
-
-      if (pendingUserStartGesture) {
-        void startAudioFromGesture();
-      }
+      applyStartupPlaybackStrategy();
     });
 
     widget.bind(window.SC.Widget.Events.PLAY, () => {
@@ -1464,23 +1477,15 @@
 
     radioStatePromise
       .then((radioState) => {
-        if (!radioState) return;
+        radioStateResolved = true;
         pendingRadioState = radioState;
-
-        if (widgetReadyInitialized) {
-          if (radioState.bootstrapAccepted === false) {
-            if (!isPlaying) {
-              startFallbackPlayback();
-            }
-          } else {
-            hasSyncedToRadio = true;
-            syncWithRadioState(radioState);
-          }
-
-          updateTrackTitle(true);
-        }
+        applyStartupPlaybackStrategy();
       })
-      .catch((_err) => {});
+      .catch((_err) => {
+        radioStateResolved = true;
+        pendingRadioState = null;
+        applyStartupPlaybackStrategy();
+      });
 
     renderPlaylistFromCurrentData();
 
@@ -1544,4 +1549,3 @@
     }
   });
 })();
-
