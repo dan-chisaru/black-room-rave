@@ -533,10 +533,24 @@
   }
 
   async function startAudioFromGesture() {
-    if (!widget || !widgetReadyInitialized) {
+    if (!widget) {
       pendingUserStartGesture = true;
       updateTransportLabel();
       return false;
+    }
+
+    // Use the tap gesture immediately, even before READY, to satisfy mobile autoplay.
+    if (!widgetReadyInitialized) {
+      hasActivatedAudioGesture = true;
+      userStopped = false;
+      pendingUserStartGesture = true;
+      try {
+        widget.play();
+      } catch (_err) {
+        // Ignore and let READY path retry.
+      }
+      updateTransportLabel();
+      return true;
     }
 
     hasActivatedAudioGesture = true;
@@ -1549,3 +1563,4 @@
     }
   });
 })();
+
