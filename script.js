@@ -33,6 +33,8 @@
   const GOD_MODE_UNLOCKED = true;
   const MANUAL_GOD_MODE_OVERRIDE_MS = 2 * 60 * 1000;
   const INTRO_SKIP_DEFAULT_MS = 90 * 1000;
+  const ADMIN_SEEK_SYNC_GRACE_MS = 8000;
+  const ADMIN_SEEK_DEBOUNCE_MS = 900;
 
   const room = document.getElementById("room");
   const roomLogo = document.getElementById("room-logo");
@@ -40,6 +42,7 @@
   const trackTitleEl = document.getElementById("track-title");
   const trackTimeEl = document.getElementById("track-time");
   const liveCommentEl = document.getElementById("live-comment");
+  const liveCommentDebugEl = document.getElementById("live-comment-debug");
   const visualizerEl = document.getElementById("visualizer");
   const bars = visualizerEl ? Array.from(visualizerEl.querySelectorAll(".bar")) : [];
   const scIframe = document.getElementById("sc-player");
@@ -74,6 +77,10 @@
   let adminWidgetSyncIntervalId = null;
   let listenerHeartbeatIntervalId = null;
   let manualGodModeOverrideUntilMs = 0;
+  let adminSeekInFlight = false;
+  let suppressAdminSyncUntilMs = 0;
+  let lastGodSeekRequestMs = 0;
+  let lastGodSeekPositionMs = -1;
 
   let fallbackMode = false;
   let bootstrapSubmitted = false;
@@ -96,6 +103,8 @@
   let activeCommentTrackId = null;
   let activeTimelineComments = [];
   let activeCommentText = "";
+  let activeCommentSource = "idle";
+  let activeCommentPositionMs = 0;
   const trackSeenCounts = new Map();
   let lastObservedTrackIndex = null;
 
@@ -143,38 +152,61 @@
   }
 
   async function fetchTrackTimelineComments(trackId) {
-    if (!Number.isFinite(trackId) || trackId <= 0) return [];
+    if (!Number.isFinite(trackId) || trackId <= 0) {
+      return { comments: [], source: "invalid_track_id" };
+    }
 
     try {
       const res = await fetch(`${TRACK_COMMENTS_URL}?trackId=${trackId}`, { cache: "no-store" });
-      if (!res.ok) return [];
+      if (!res.ok) {
+        return { comments: [], source: `http_${res.status}` };
+      }
 
       const data = await res.json();
-      if (!Array.isArray(data?.comments)) return [];
+      if (!Array.isArray(data?.comments)) {
+        return { comments: [], source: data?.source || "invalid_payload" };
+      }
 
-      return data.comments
+      const comments = data.comments
         .map((comment) => ({
-          timestampMs: Number.isFinite(comment?.timestampMs) ? Math.max(0, Math.floor(comment.timestampMs)) : null,
+          timestampMs: Number.isFinite(comment?.timestampMs)
+            ? Math.max(0, Math.floor(comment.timestampMs))
+            : null,
           body: sanitizeCommentText(comment?.body),
         }))
         .filter((comment) => Number.isFinite(comment.timestampMs) && comment.body)
         .sort((a, b) => a.timestampMs - b.timestampMs);
+
+      return { comments, source: data?.source || "ok" };
     } catch (_err) {
-      return [];
+      return { comments: [], source: "fetch_error" };
     }
+  }
+
+  function renderCommentDebug() {
+    if (!liveCommentDebugEl) return;
+
+    const trackLabel = Number.isFinite(activeCommentTrackId) ? String(activeCommentTrackId) : "none";
+    const countLabel = Array.isArray(activeTimelineComments) ? activeTimelineComments.length : 0;
+    const posLabel = formatTime(activeCommentPositionMs || 0);
+
+    liveCommentDebugEl.textContent = `comments debug | track ${trackLabel} | source ${activeCommentSource} | loaded ${countLabel} | at ${posLabel}`;
   }
 
   function updateLiveCommentAtPosition(positionMs) {
     if (!liveCommentEl) return;
+
+    const elapsed = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
+    activeCommentPositionMs = elapsed;
+
     if (!Array.isArray(activeTimelineComments) || !activeTimelineComments.length) {
       activeCommentText = "";
       liveCommentEl.textContent = "";
+      renderCommentDebug();
       return;
     }
 
-    const elapsed = Number.isFinite(positionMs) ? Math.max(0, positionMs) : 0;
     let active = null;
-
     for (let i = 0; i < activeTimelineComments.length; i += 1) {
       const comment = activeTimelineComments[i];
       if (comment.timestampMs > elapsed) break;
@@ -182,10 +214,12 @@
     }
 
     const nextText = active ? active.body : "";
-    if (nextText === activeCommentText) return;
+    if (nextText !== activeCommentText) {
+      activeCommentText = nextText;
+      liveCommentEl.textContent = nextText;
+    }
 
-    activeCommentText = nextText;
-    liveCommentEl.textContent = nextText;
+    renderCommentDebug();
   }
 
   async function updateLiveCommentForSound(sound) {
@@ -193,11 +227,15 @@
 
     const parsedTrackId = Number.parseInt(sound?.id, 10);
     const trackId = Number.isFinite(parsedTrackId) ? parsedTrackId : null;
+
     if (!Number.isFinite(trackId)) {
       activeCommentTrackId = null;
       activeTimelineComments = [];
       activeCommentText = "";
+      activeCommentSource = "no_track_id";
+      activeCommentPositionMs = 0;
       liveCommentEl.textContent = "";
+      renderCommentDebug();
       return;
     }
 
@@ -205,12 +243,21 @@
       activeCommentTrackId = trackId;
       activeTimelineComments = [];
       activeCommentText = "";
+      activeCommentSource = "loading";
+      activeCommentPositionMs = 0;
       liveCommentEl.textContent = "";
-      activeTimelineComments = await fetchTrackTimelineComments(trackId);
+      renderCommentDebug();
+
+      const result = await fetchTrackTimelineComments(trackId);
+      activeTimelineComments = result.comments;
+      activeCommentSource = result.source;
+      renderCommentDebug();
     }
 
     if (!widget) {
+      activeCommentSource = "no_widget";
       liveCommentEl.textContent = "";
+      renderCommentDebug();
       return;
     }
 
@@ -330,6 +377,9 @@
     if (trackTitleEl) trackTitleEl.textContent = "loading...";
     if (trackTimeEl) trackTimeEl.textContent = "--:-- / --:--";
     if (liveCommentEl) liveCommentEl.textContent = "";
+    activeCommentSource = "idle";
+    activeCommentPositionMs = 0;
+    renderCommentDebug();
   }
   function startNowPlayingRefreshLoop() {
     if (nowPlayingRefreshIntervalId != null) {
@@ -912,6 +962,7 @@
         : trackIndex;
 
       manualGodModeOverrideUntilMs = Date.now() + MANUAL_GOD_MODE_OVERRIDE_MS;
+      suppressAdminSyncUntilMs = Date.now() + ADMIN_SEEK_SYNC_GRACE_MS;
 
       pendingRadioState = {
         trackIndex: jumpedTrackIndex,
@@ -941,6 +992,7 @@
       console.error("Admin jump error", err);
 
       manualGodModeOverrideUntilMs = Date.now() + 12 * 60 * 60 * 1000;
+      suppressAdminSyncUntilMs = Date.now() + ADMIN_SEEK_SYNC_GRACE_MS;
       pendingRadioState = {
         trackIndex,
         positionMs: requestedPositionMs,
@@ -964,6 +1016,82 @@
         adminPlaylistStatusEl.textContent = "backend jump unavailable - local god jump active";
       }
     }
+  }
+  async function applyGodModeSeek(positionMs, source = "admin_seek") {
+    if (!widget || !godModeEnabled) return false;
+    if (!Number.isFinite(positionMs) || positionMs < 0) return false;
+    if (adminSeekInFlight) return false;
+
+    adminSeekInFlight = true;
+
+    try {
+      const trackIndex = await new Promise((resolve) => {
+        if (typeof widget.getCurrentSoundIndex !== "function") {
+          resolve(Number.isFinite(liveTrackIndex) ? liveTrackIndex : 0);
+          return;
+        }
+
+        widget.getCurrentSoundIndex((idx) => {
+          resolve(Number.isFinite(idx) ? idx : 0);
+        });
+      });
+
+      const safePositionMs = Math.max(0, Math.floor(positionMs));
+
+      const res = await fetch(ADMIN_JUMP_TRACK_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackIndex, positionMs: safePositionMs }),
+      });
+
+      if (!res.ok) throw new Error("seek jump failed");
+
+      const data = await res.json();
+      const jumpedTrackIndex = Number.isFinite(data?.jumpedToTrackIndex)
+        ? data.jumpedToTrackIndex
+        : trackIndex;
+
+      manualGodModeOverrideUntilMs = Date.now() + MANUAL_GOD_MODE_OVERRIDE_MS;
+      suppressAdminSyncUntilMs = Date.now() + ADMIN_SEEK_SYNC_GRACE_MS;
+
+      pendingRadioState = {
+        trackIndex: jumpedTrackIndex,
+        positionMs: safePositionMs,
+        playlistUrl: PLAYLIST_URL,
+        serverTimeMs: Date.now(),
+      };
+
+      widget.seekTo(safePositionMs);
+
+      if (adminPlaylistStatusEl) {
+        adminPlaylistStatusEl.textContent = `god seek ${formatTime(safePositionMs)} (${source})`;
+      }
+
+      return true;
+    } catch (err) {
+      console.error("God seek error", err);
+      if (adminPlaylistStatusEl) {
+        adminPlaylistStatusEl.textContent = "god seek failed";
+      }
+      return false;
+    } finally {
+      adminSeekInFlight = false;
+    }
+  }
+
+  function requestGodModeSeek(positionMs, source = "admin_seek") {
+    if (!godModeEnabled) return;
+    if (Date.now() < suppressAdminSyncUntilMs) return;
+    if (!Number.isFinite(positionMs) || positionMs < 0) return;
+
+    const now = Date.now();
+    const safePositionMs = Math.floor(positionMs);
+    const nearSamePosition = Math.abs(safePositionMs - lastGodSeekPositionMs) < 1200;
+    if (nearSamePosition && now - lastGodSeekRequestMs < ADMIN_SEEK_DEBOUNCE_MS) return;
+
+    lastGodSeekRequestMs = now;
+    lastGodSeekPositionMs = safePositionMs;
+    void applyGodModeSeek(safePositionMs, source);
   }
   function getTracksForRender() {
     if (soundCloudPlaylistTracks.length) {
@@ -1255,10 +1383,30 @@
       adminPluginReady = true;
       adminPluginWidget.setVolume(0);
     });
+
+    if (window.SC.Widget.Events.SEEK) {
+      adminPluginWidget.bind(window.SC.Widget.Events.SEEK, (event) => {
+        const eventPos = Number.parseInt(event?.currentPosition ?? event, 10);
+        requestGodModeSeek(eventPos, "plugin_seek");
+      });
+    }
+
+    if (window.SC.Widget.Events.PLAY_PROGRESS) {
+      adminPluginWidget.bind(window.SC.Widget.Events.PLAY_PROGRESS, (event) => {
+        const eventPos = Number.parseInt(event?.currentPosition, 10);
+        if (!Number.isFinite(eventPos)) return;
+
+        const jumpDelta = Math.abs(eventPos - lastGodSeekPositionMs);
+        if (jumpDelta > 5000) {
+          requestGodModeSeek(eventPos, "plugin_progress_jump");
+        }
+      });
+    }
   }
 
   function syncAdminWidgetToMain() {
     if (!widget || !adminPluginWidget || !adminPluginReady) return;
+    if (adminSeekInFlight || Date.now() < suppressAdminSyncUntilMs) return;
 
     widget.getCurrentSoundIndex((mainIndex) => {
       if (!Number.isFinite(mainIndex)) return;
@@ -1270,6 +1418,7 @@
 
             adminPluginWidget.getPosition((adminPosMs) => {
               if (!Number.isFinite(adminPosMs) || Math.abs(adminPosMs - mainPosMs) > 7000) {
+                suppressAdminSyncUntilMs = Date.now() + 1200;
                 adminPluginWidget.seekTo(mainPosMs);
               }
             });
@@ -1459,6 +1608,22 @@
     }
   });
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

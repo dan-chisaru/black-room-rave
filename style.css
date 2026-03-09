@@ -115,6 +115,19 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.live-comment-debug {
+  min-height: 0.9rem;
+  margin: 0.1rem auto 0;
+  width: min(520px, 86vw);
+  font-size: 0.48rem;
+  letter-spacing: 0.08em;
+  text-transform: none;
+  color: rgba(255, 255, 255, 0.34);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .room-visualizer-wrapper {
   flex: 1;
   display: flex;
@@ -462,6 +475,7 @@ body.god-mode .god-panel {
     font-size: 0.58rem;
   }
 }
+
 
 
 
