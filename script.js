@@ -65,7 +65,7 @@
   let widget = null;
   let isPlaying = false;
   let animationFrameId = null;
-  let volume = 80;
+  let volume = 100;
   let pendingRadioState = null;
   let hasSyncedToRadio = false;
   let widgetReadyInitialized = false;
@@ -86,8 +86,6 @@
   let bootstrapSubmitted = false;
   let pendingFallbackSeekMs = null;
   let userStopped = false;
-  let hasActivatedAudioGesture = false;
-  let pendingUserStartGesture = false;
   let radioStateResolved = false;
   let startupPlaybackChosen = false;
 
@@ -532,36 +530,6 @@
     }
   }
 
-  async function startAudioFromGesture() {
-    if (!widget) {
-      pendingUserStartGesture = true;
-      updateTransportLabel();
-      return false;
-    }
-
-    // Use the tap gesture immediately, even before READY, to satisfy mobile autoplay.
-    if (!widgetReadyInitialized) {
-      hasActivatedAudioGesture = true;
-      userStopped = false;
-      pendingUserStartGesture = true;
-      try {
-        widget.play();
-      } catch (_err) {
-        // Ignore and let READY path retry.
-      }
-      updateTransportLabel();
-      return true;
-    }
-
-    hasActivatedAudioGesture = true;
-    userStopped = false;
-    pendingUserStartGesture = false;
-    await rejoinLivePlayback();
-    applyUserVolume();
-    updateTransportLabel();
-    return true;
-  }
-
   // Startup rule: follow server state when server is already live; use shuffled fallback only when server is not live.
   function applyStartupPlaybackStrategy() {
     if (!widget || !widgetReadyInitialized || startupPlaybackChosen || !radioStateResolved) {
@@ -595,44 +563,13 @@
     }
 
     window.setTimeout(() => updateTrackTitle(true), 700);
-
-    if (pendingUserStartGesture) {
-      void startAudioFromGesture();
-    }
-  }
-
-  function setupGlobalTapToStart() {
-    const onPointerDown = async () => {
-      const started = await startAudioFromGesture();
-      if (started) cleanup();
-    };
-
-    const onKeyDown = async (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      const started = await startAudioFromGesture();
-      if (started) cleanup();
-    };
-
-    const cleanup = () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onKeyDown);
-    };
-
-    document.addEventListener("pointerdown", onPointerDown, { passive: true });
-    document.addEventListener("keydown", onKeyDown);
   }
 
   function togglePlayback() {
-    if (!widget) {
-      if (!hasActivatedAudioGesture) {
-        void startAudioFromGesture();
-      }
-      return;
-    }
+    if (!widget) return;
 
     widget.isPaused(async (paused) => {
       if (userStopped || paused || !isPlaying) {
-        hasActivatedAudioGesture = true;
         userStopped = false;
         await rejoinLivePlayback();
         applyUserVolume();
@@ -646,12 +583,6 @@
 
   function updateTransportLabel() {
     if (!transportButton) return;
-
-    if (!hasActivatedAudioGesture) {
-      transportButton.textContent = "Click anywhere to play";
-      return;
-    }
-
     transportButton.textContent = userStopped || !isPlaying ? "Play" : "Stop";
   }
 
@@ -1424,9 +1355,6 @@
       void loadPlaylistFromWidget(false);
 
       if (widgetReadyInitialized) {
-        if (pendingUserStartGesture) {
-          void startAudioFromGesture();
-        }
         window.setTimeout(() => updateTrackTitle(true), 300);
         return;
       }
@@ -1487,7 +1415,6 @@
     startNowPlayingRefreshLoop();
     startListenerHeartbeatLoop();
     startAdminWidgetSyncLoop();
-    setupGlobalTapToStart();
 
     radioStatePromise
       .then((radioState) => {
@@ -1563,4 +1490,3 @@
     }
   });
 })();
-

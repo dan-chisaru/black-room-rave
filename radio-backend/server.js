@@ -352,13 +352,32 @@ app.get("/api/admin-state", (req, res) => {
 });
 
 
+app.get("/health", (_req, res) => {
+  const nowMs = Date.now();
+  res.json({
+    ok: true,
+    service: "black-room-rave",
+    serverTimeMs: nowMs,
+    uptimeMs: nowMs - serverBootMs,
+  });
+});
+
+app.get("/api/state", (_req, res) => {
+  const nowMs = Date.now();
+  const activeTracks = getActiveTracks();
+  const radioState = getRadioState(nowMs, activeTracks);
+
+  res.json({
+    ok: true,
+    serverTimeMs: nowMs,
+    uptimeMs: nowMs - serverBootMs,
+    bootstrapAccepted,
+    radioEpochMs,
+    playlistOrder,
+    radioState,
+  });
+});
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => {
   console.log(`Radio state server listening on http://localhost:${PORT}`);
 });
-
-
-
-
-
-
